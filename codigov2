@@ -1,0 +1,329 @@
+function main() {
+  const matchingFile = findFileByPattern();
+  if (matchingFile) {
+    const excelFileId = importExcelToSheet(matchingFile);
+  }
+}
+
+function findFileByPattern() {
+  const folderId = '1f1fi3NA7JTw0OlRjBnmaxi-XrwvoQgK0';
+  const folder = DriveApp.getFolderById(folderId);
+  const files = folder.getFiles();
+
+  while (files.hasNext()) {
+    const file = files.next();
+    const mimeType = file.getMimeType();
+    const fileName = file.getName();
+    const fileExtension = fileName.slice(fileName.lastIndexOf('.'));
+
+    if (fileExtension === '.xlsx' && mimeType === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet') {
+      return file;
+    }
+  }
+
+  return null;
+}
+
+function importExcelToSheet(matchingFile) {
+  if (matchingFile) {
+    const fileId = matchingFile.getId();
+    const spreadsheetId = '1HeUBldNQivlzWSr2FbqLAZ8xEHgqYL7Au9aZhUpiJRo';
+    const spreadsheet = SpreadsheetApp.openById(spreadsheetId);
+
+    const fileBlob = matchingFile.getBlob();
+    const resource = {
+      title: matchingFile.getName(),
+      mimeType: 'application/vnd.google-apps.spreadsheet',
+    };
+
+    const convertedFile = Drive.Files.insert(resource, fileBlob, {
+      convert: true,
+    });
+
+    const excelFileId = convertedFile.id;
+    const excelFile = SpreadsheetApp.openById(excelFileId);
+    const excelSheet = excelFile.getSheets()[0];
+    const range = excelSheet.getDataRange();
+    const values = range.getValues();
+    const sheetTitle = "AE_Orders_" + Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "dd/MM/yy_HH:mm:ss");
+
+    const newSheet = spreadsheet.insertSheet(sheetTitle);
+
+    newSheet.getRange(1, 1, values.length, values[0].length).setValues(values);
+    Drive.Files.remove(excelFileId);
+
+    // Mover el archivo a la carpeta de archivo y renombrarlo
+    const archiveFolderId = '1-jwcKFg65riIFU9vqe2sybbfZWtvwQqI';
+    const file = DriveApp.getFileById(fileId);
+    const archiveFolder = DriveApp.getFolderById(archiveFolderId);
+    //file.moveTo(archiveFolder);
+    file.setName(sheetTitle);
+
+    // Obtener la hoja recién importada y llamar a trasladarDatos para procesarla
+    const importedSheet = spreadsheet.getSheetByName(sheetTitle);
+    trasladarDatos(importedSheet);
+
+  } else {
+    Logger.log('No se encontró el archivo');
+  }
+}
+
+function trasladarDatos(importedSheet) {
+  var hojaOriginal = importedSheet;
+  //Obtener los valores de las columnas necesarias de la hoja de origen, excluyendo la primera fila
+  var idPedidos = hojaOriginal.getRange("A2:A").getValues();
+  var estadosPedido = hojaOriginal.getRange("B2:B").getValues();
+  var propietarios = hojaOriginal.getRange("C2:C").getValues();
+  var nombresComprador = hojaOriginal.getRange("D2:D").getValues();
+  var fechaPedido = hojaOriginal.getRange("E2:E").getValues();
+  var fechaPago = hojaOriginal.getRange("F2:F").getValues();
+  var totalesProducto = hojaOriginal.getRange("G2:G").getValues();
+  var costesEnvio = hojaOriginal.getRange("H2:H").getValues();
+  var estimatedVat = hojaOriginal.getRange("I2:I").getValues();
+  var whetherPlatformCollects = hojaOriginal.getRange("J2:J").getValues();
+  var importesPedido = hojaOriginal.getRange("K2:K").getValues();
+    importesPedido = importesPedido.map(function(valor) {
+  var stringValue = String(valor[0]);
+    return [stringValue.replace(".", ",").replace("€", "").trim()];
+    });
+  var promocionesTienda = hojaOriginal.getRange("L2:L").getValues();
+  var infoProducto = hojaOriginal.getRange("M2:M").getValues();
+  var infoProductoStrings = infoProducto.map(function(row) {
+    return row.map(function(cell) {
+      return cell.toString();
+    });
+  });
+  var codigosProducto = hojaOriginal.getRange("N2:N").getValues();
+  var notasPedido = hojaOriginal.getRange("O2:O").getValues();
+  var direcciones = hojaOriginal.getRange("P2:P").getValues();
+  var nombresDestinatario = hojaOriginal.getRange("Q2:Q").getValues();
+  var paisesComprador = hojaOriginal.getRange("R2:R").getValues();
+  var estadosProvincia = hojaOriginal.getRange("S2:S").getValues();
+  var ciudades = hojaOriginal.getRange("T2:T").getValues();
+  var direccionesDestinatario = hojaOriginal.getRange("U2:U").getValues();
+  var codigosPostales = hojaOriginal.getRange("V2:V").getValues();
+  var telefonos = hojaOriginal.getRange("W2:W").getValues();
+  var moviles = hojaOriginal.getRange("X2:X").getValues();
+  var metodosEnvio = hojaOriginal.getRange("Y2:Y").getValues();
+  var tiemposPreparacionEnvio = hojaOriginal.getRange("Z2:Z").getValues();
+
+  var fecha = new Date();
+  var timeZone = "GMT-3";
+  var timestamp = Utilities.formatDate(fecha, timeZone, "yyyy-MM-dd'T'HH:mm:ss'Z'");
+  var line_items = [];
+  var line_subtotal = 0;
+  var line_total_tax = 0;
+  var line_total = 0;
+   
+  for (var i = 0; i < idPedidos.length; i++) {
+
+    if (nombresComprador[i][0] != "" && direccionesDestinatario[i][0] != "" && moviles[i][0] != "" && codigosPostales[i][0] != "" && ciudades[i][0] != "") {
+      // Obtener la cantidad del producto de la celda actual
+      var codigos = codigosProducto[i][0].split(";");
+      var line_items = [];
+      var itemsQuantity = 0;
+
+        // Obtener el código ISO del país
+      let paisIso = countryToIso[paisesComprador[i][0]];
+
+      if (!paisIso) {
+        // Si no se encuentra el país en el objeto, manejar el error como prefieras
+        console.error('País no encontrado:', paisesComprador[i][0]);
+        continue;
+      }
+
+      // Antes del primer bucle for
+      console.log("Iniciando el proceso...");
+    
+      for (var j = 0; j < codigos.length; j++) {
+          console.log(`Iteración ${j+1} con código: ${codigos[j]}`);
+
+        if (codigos[j]) {
+          var sku = codigos[j].split(" ")[0];
+          var quantity = codigos[j].split("* ")[1];
+          var unidades = quantity.replace(",", ".").split(" ")[0];
+          var item_total = parseFloat(importesPedido[i][0].replace(",", ".").replace("€", ""));
+          var price = item_total;
+          var price_per_unit = price / parseFloat(unidades);
+
+          console.log(`SKU: ${sku}`);
+          console.log(`Cantidad: ${quantity}`);
+          console.log(`Unidades: ${unidades}`);
+          console.log(`Total del artículo: ${item_total}`);
+          console.log(`Precio por unidad: ${price_per_unit}`);
+          
+          // Obtener la clase de impuesto usando el SKU
+          var taxClass = skuToTaxClass[sku] || 'DEFAULT'; // Usar 'DEFAULT' si no se encuentra
+          
+          // Obtener el tipo de impuesto para el país
+          var countryTaxType = commonTaxClasses[taxClass] ? commonTaxClasses[taxClass][paisIso] : 'S'; // Usar 'S' como estándar si no se encuentra
+          
+          // Obtener la tasa de impuesto real
+          var iva = countryToTaxRates[paisIso] ? countryToTaxRates[paisIso][countryTaxType] : 21; // Usar 21 como estándar si no se encuentra
+
+          var item_iva = price_per_unit * (iva / 100);
+
+          // Crear la cadena JSON para line_items
+          var line_item_json = JSON.stringify({
+            "sku": sku,
+            "quantity": quantity,
+            "total": item_total / (1 + (iva / 100)),  // Nota: Modificar según cómo quieras aplicar el IVA
+            "name": sku
+          });
+          
+          // Parsear la cadena JSON a un objeto
+          var line_item = JSON.parse(line_item_json);
+
+          // Agregar el item al array de line_items
+          line_items.push(line_item);
+
+          // Calcular los valores de subtotal, total_tax y total para este item
+          var item_subtotal = price * parseFloat(unidades);  // Nota: 'quantity' cambió a 'parseFloat(unidades)'
+          var item_total_tax = item_subtotal * (iva / 100);
+
+          // Agregar los valores de este item a los valores totales de la línea
+          line_subtotal += item_subtotal;
+          line_total_tax += item_total_tax;
+          line_total += item_total;
+
+            console.log(`Subtotal del artículo: ${item_subtotal}`);
+            console.log(`Impuesto total del artículo: ${item_total_tax}`);
+            console.log(`Total del artículo: ${item_total}`);
+          
+          // Acumular la cantidad de unidades
+          itemsQuantity += parseFloat(unidades);
+        }
+      }
+
+    // Dividir el precio total por la cantidad total
+    var price_per_unit = item_total / itemsQuantity;
+
+    // Actualizar los precios de los items en el array de line_items
+    for (var k = 0; k < line_items.length; k++) {
+      var sku = line_items[k].sku;
+      var taxClass = skuToTaxClass[sku] || 'DEFAULT'; 
+      var countryTaxType = commonTaxClasses[taxClass] ? commonTaxClasses[taxClass][paisIso] : 'S';
+      var iva = countryToTaxRates[paisIso] ? countryToTaxRates[paisIso][countryTaxType] : 21;
+      var taxRateDecimal = iva / 100;       
+      console.log(`Tipo de IVA: ${iva}`);
+      var price_per_unit = parseFloat(line_items[k].total); // Asumiendo que 'total' ya contiene el precio total para ese SKU
+      var subtotal_num = price_per_unit / (1 + iva / 100);
+      var impuestos_num = price_per_unit - subtotal_num;
+
+      // Redondear a dos decimales
+      subtotal_num = parseFloat(subtotal_num.toFixed(2));
+      impuestos_num = parseFloat(impuestos_num.toFixed(2));
+
+      // Actualizar los campos en el objeto de line_items
+      line_items[k].total = subtotal_num.toFixed(2);
+      line_items[k].total_tax = impuestos_num.toFixed(2);
+      line_items[k].subtotal = subtotal_num.toFixed(2);
+    }
+
+  // Convertir el array de objetos en una cadena JSON
+  var line_items_json = JSON.stringify(line_items);
+
+  // Eliminar el símbolo de euro y el espacio
+  var importe = importesPedido[i][0].replace("€", "").trim();
+  console.log("Importe después de reemplazar símbolo y trim:", importe);
+  var importe_num = parseFloat(importe.replace(",", "."));
+  console.log("Importe_num después de conversión:", importe_num);
+
+  // Si el valor no se pudo convertir, establecerlo en cero
+  if (isNaN(importe_num)) {
+    console.log("Importe no válido:", importe);  // Mostrar el importe original que no se pudo convertir
+    importe_num = 0;
+  }
+
+    var subtotal_num = importe_num / (1 + iva / 100);
+    subtotal_num = parseFloat(subtotal_num.toFixed(2));
+    console.log("Valor de subtotal_num:", subtotal_num);  // Log para verificar el valor de subtotal_num
+
+
+    // Formatear subtotal e impuestos como strings con separador de miles y decimales
+    var subtotal = subtotal_num.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    var impuestos = impuestos_num.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    console.log("Valor de subtotal:", subtotal);  // Log para verificar el valor de subtotal
+    console.log("Valor de impuestos:", impuestos);  // Log para verificar el valor de impuestos
+
+    console.log("Valor de Tipo de IVA antes de convertir:", countryTaxType);  // Nuevo log
+
+    // Convertir la tasa de impuesto en un decimal
+    var taxRateDecimal = iva / 100;
+    console.log("Valor de taxRateDecimal:", taxRateDecimal);  // Log para verificar el valor de taxRateDecimal
+
+    // Verificamos si taxRateDecimal es un número
+    if (isNaN(taxRateDecimal)) {
+        console.log("taxRateDecimal es NaN");  // Nuevo log
+    } else {
+        console.log("taxRateDecimal es un número válido");  // Nuevo log
+    }
+
+    console.log("Valor de taxClass:", taxClass); // Verificar el valor de taxClass
+    console.log("Valor de paisIso:", paisIso); // Verificar el valor de paisIso
+    //console.log("Valor de commonTaxClasses:", commonTaxClasses); // Verificar el valor de commonTaxClasses
+    console.log("Valor de countryTaxType:", countryTaxType); // Verificar el valor de countryTaxType
+
+
+    // Crear el objeto con los datos del pedido
+    var pedido = {
+      "payment_method": "aliexpress",
+      "payment_method_title": "Aliexpress",
+      "set_paid": true,
+      "billing": {
+        "first_name": nombresDestinatario[i][0].toString(),
+        "address_1": direccionesDestinatario[i][0].toString(),
+        "phone": moviles[i][0].toString(),
+        "postcode": codigosPostales[i][0].toString(),
+        "city": ciudades[i][0].toString(),
+        "country": paisIso.toString(),
+        },
+      "shipping": {
+        "first_name": nombresDestinatario[i][0].toString(),
+        "address_1": direccionesDestinatario[i][0].toString(),
+        "phone": moviles[i][0].toString(),
+        "postcode": codigosPostales[i][0].toString(),
+        "city": ciudades[i][0].toString(),
+        "country": paisIso.toString(),
+      },
+      "line_items": line_items.map(item => ({
+        "sku": item.sku,
+        "quantity": parseInt(item.quantity),
+        "price": price_per_unit.toString(), // convertir a string
+        "total": parseFloat(item.total / (1 + taxRateDecimal)).toString(),
+      })),
+      
+      "shipping_lines": [
+        {
+          "instance_id": "3",
+          "method_title": "ePaq24H",
+          "method_id": "free_shipping:3"
+        }
+      ],
+        
+      "payment_method": "Aliexpress",
+        "payment_method_title": "Aliexpress",
+        "customer_note": idPedidos[i][0].toString(),
+        "status": "pending",
+        "date_created": timestamp
+        };
+  // Hacer la solicitud POST a la API de WooCommerce
+  var consumerKey = 'ck_...'; // Agrega aquí tu clave de consumidor
+  var consumerSecret = 'cs_...'; // Agrega aquí tu secreto de consumidor
+  var url = 'https://staging6.saquitodelasalud.com/wp-json/wc/v3/orders';
+  var options = {
+    method: 'post',
+    contentType: 'application/json',
+    headers: {
+      Authorization: 'Basic ' + Utilities.base64Encode(consumerKey + ':' + consumerSecret),
+    },
+    payload: JSON.stringify(pedido),
+  };
+
+  var response = UrlFetchApp.fetch(url, options);
+  var result = JSON.parse(response.getContentText());
+    
+  }
+}
+
+}
